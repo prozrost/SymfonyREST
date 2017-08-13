@@ -1,75 +1,113 @@
 <?php
-/**
- * Created by PhpStorm.
- * User: Ростислав
- * Date: 09.08.2017
- * Time: 12:02
- */
 
 namespace AppBundle\Controller;
-use Sensio\Bundle\FrameworkExtraBundle\Configuration\Route;
-use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+
 use FOS\RestBundle\Controller\Annotations as Rest;
 use FOS\RestBundle\Controller\FOSRestController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use FOS\RestBundle\View\View;
-use AppBundle\Entity\User;
+use Nelmio\ApiDocBundle\Annotation\ApiDoc;
 
 class UserController extends FOSRestController
 {
+
     /**
-     * @Rest\Get("/user")
+     * @ApiDoc(
+     *     description = "get user with dome id",
+     *     requirements ={
+     *     {
+     *       "name" = "id",
+     *       "type" = "integer",
+     *       "requirement" = "\d+",
+     *       "description" = "id of object what you need to fetch"
+     *     }
+     *     }
+     *     )
      */
-    public function getAction()
-    {
-        $restresult = $this->getDoctrine()->getRepository('AppBundle:User')->findAll();
-        if ($restresult === null) {
-            return new View("there are no users exist", Response::HTTP_NOT_FOUND);
-        }
-        return $restresult;
-    }
-    /**
-     * @Rest\Get("/user/{id}")
-     */
-    public function idAction($id)
+    public function getUserAction($id)
     {
         $singleresult = $this->getDoctrine()->getRepository('AppBundle:User')->find($id);
         if ($singleresult === null) {
             return new View("user not found", Response::HTTP_NOT_FOUND);
         }
-        return $singleresult;
+        $json_result = json_encode($singleresult->name);
+        return $json_result;
     }
     /**
-     * @Rest\Post("/user/")
+     * @ApiDoc(
+     *     description = "register user in system",
+     *     requirements ={
+     *     {
+     *       "name" = "request",
+     *       "type" = "Request",
+     *       "description" = "$request object what we need to parse"
+     *     }
+     *     }
+     *     )
      */
-    public function postAction(Request $request)
+    public function postUserAction(Request $request)
     {
-        $data = new User;
-        $name = $request->get('name');
-        $email = $request->get('email');
-        $password = $request->get('password');
-        $roles = $request->get('roles');
-        if(empty($name) || empty($role) || empty($email) ||empty($password))
-        {
-            return new View("NULL VALUES ARE NOT ALLOWED", Response::HTTP_NOT_ACCEPTABLE);
+        /** @var $formFactory \FOS\UserBundle\Form\Factory\FactoryInterface */
+        $formFactory = $this->get('fos_user.registration.form.factory');
+        /** @var $userManager \FOS\UserBundle\Model\UserManagerInterface */
+        $userManager = $this->get('fos_user.user_manager');
+        /** @var $dispatcher \Symfony\Component\EventDispatcher\EventDispatcherInterface */
+        $dispatcher = $this->get('event_dispatcher');
+
+        $user = $userManager->createUser();
+        $user->setEnabled(true);
+
+        $event = new \FOS\UserBundle\Event\GetResponseUserEvent($user, $request);
+        $dispatcher->dispatch(\FOS\UserBundle\FOSUserEvents::REGISTRATION_INITIALIZE, $event);
+
+        if (null !== $event->getResponse()) {
+            return $event->getResponse();
         }
-        $data->setName($name);
-        $data->setRoles($roles);
-        $data->setEmail($email);
-        $data->setPassword($password);
-        $em = $this->getDoctrine()->getManager();
-        $em->persist($data);
-        $em->flush();
-        return new View("User Added Successfully", Response::HTTP_OK);
+
+        $form = $formFactory->createForm();
+        $form->setData($user);
+
+        $form->handleRequest($request);
+
+        if ($form->isValid()) {
+            $event = new \FOS\UserBundle\Event\FormEvent($form, $request);
+            $dispatcher->dispatch(\FOS\UserBundle\FOSUserEvents::REGISTRATION_SUCCESS, $event);
+
+            $userManager->updateUser($user);
+
+            if (null === $response = $event->getResponse()) {
+                $url = $this->generateUrl('fos_user_registration_confirmed');
+                $response = new \Symfony\Component\HttpFoundation\RedirectResponse($url);
+            }
+
+            $dispatcher->dispatch(\FOS\UserBundle\FOSUserEvents::REGISTRATION_COMPLETED, new \FOS\UserBundle\Event\FilterUserResponseEvent($user, $request, $response));
+
+            $view = $this->view(array('token' => $this->get("lexik_jwt_authentication.jwt_manager")->create($user)), Codes::HTTP_CREATED);
+
+            return $this->handleView($view);
+        }
+
+        $view = $this->view($form, Codes::HTTP_BAD_REQUEST);
+        return $this->handleView($view);
     }
     /**
-     * @Rest\Delete("/user/{id}")
+     * @ApiDoc(
+     *     description = "delete user with dome id",
+     *     requirements ={
+     *     {
+     *       "name" = "id",
+     *       "type" = "integer",
+     *       "requirement" = "\d+",
+     *       "description" = "id of object what you need to delete"
+     *     }
+     *     }
+     *     )
      */
-    public function deleteAction($id)
+    public function deleteUserAction($id)
     {
         $sn = $this->getDoctrine()->getManager();
-        $user = $this->getDoctrine()->getRepository('AppBundle:User')->find($id);
+        $user = $sn->getRepository('AppBundle:User')->find($id);
         if (empty($user)) {
             return new View("user not found", Response::HTTP_NOT_FOUND);
         }
